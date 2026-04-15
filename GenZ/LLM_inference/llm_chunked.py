@@ -14,20 +14,22 @@ unit = Unit()
 def chunked_moddeling(model = 'BERT',
     prefill_kv_sizes = [(1024, 511)],                 # [(prefill_past_kv, num_prefill)],
     decode_kv_sizes =  [1600, 1601, 1602],            # [decode_past_kv]*num_decodes,
-    system_name = 'A100_40GB_GPU', system_eff = 1, bits='bf16', debug= False, model_profilling = False,
+    system_name = 'A100_40GB_GPU', system_eff = None, bits=None, debug= False, model_profilling = False,
     tensor_parallel = 1, pipeline_parallel = 1,
     expert_parallel = 1,
-    collective_strategy='GenZ', network_config=None,
-    parallelism_hierarchy = "TP{1}_EP{1}_PP{1}",
+    collective_strategy=None, network_config=None,
+    parallelism_hierarchy=None,
     model_offload = False, ceff = None, meff = None):
 
     ##################################################################################################
     ### System Declaration
     ##################################################################################################
 
-    system = get_inference_system(system_name = system_name, bits = bits, ceff=system_eff , meff=system_eff,
-                                network_config=network_config, 
-                                collective_strategy=collective_strategy, 
+    _ceff = ceff if ceff is not None else system_eff
+    _meff = meff if meff is not None else system_eff
+    system = get_inference_system(system_name = system_name, bits = bits, ceff=_ceff, meff=_meff,
+                                network_config=network_config,
+                                collective_strategy=collective_strategy,
                                 parallelism_hierarchy=parallelism_hierarchy )
 
     ##################################################################################################

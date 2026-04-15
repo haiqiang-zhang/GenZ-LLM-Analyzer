@@ -13,11 +13,11 @@ unit = Unit()
 
 def decode_moddeling(model = 'BERT', batch_size = 1, input_tokens = 4096,
     output_tokens = 0,   Bb = 4 ,           ## Only for Decode
-    system_name = 'A100_40GB_GPU', system_eff = 1, bits='bf16', debug= False, model_profilling = False,
+    system_name = 'A100_40GB_GPU', system_eff = None, bits=None, debug= False, model_profilling = False,
     tensor_parallel = 1, pipeline_parallel = 1,
     expert_parallel = 1,
-    collective_strategy='GenZ', network_config=None,
-    parallelism_hierarchy = "TP{1}_EP{1}_PP{1}",
+    collective_strategy=None, network_config=None,
+    parallelism_hierarchy=None,
     model_offload = False, ceff = None, meff = None):
 
     if pipeline_parallel > 1:
@@ -32,9 +32,13 @@ def decode_moddeling(model = 'BERT', batch_size = 1, input_tokens = 4096,
     ### System Declaration
     ##################################################################################################
 
-    system = get_inference_system(system_name = system_name, bits = bits, ceff=system_eff , meff=system_eff,
-                                network_config=network_config, 
-                                collective_strategy=collective_strategy, 
+    # If caller passes explicit ceff/meff, they independently override
+    # the single-scalar ``system_eff`` for compute and memory efficiency.
+    _ceff = ceff if ceff is not None else system_eff
+    _meff = meff if meff is not None else system_eff
+    system = get_inference_system(system_name = system_name, bits = bits, ceff=_ceff, meff=_meff,
+                                network_config=network_config,
+                                collective_strategy=collective_strategy,
                                 parallelism_hierarchy=parallelism_hierarchy )
 
     ##################################################################################################

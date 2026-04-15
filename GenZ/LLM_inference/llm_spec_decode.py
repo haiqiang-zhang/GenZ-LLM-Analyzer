@@ -15,11 +15,11 @@ unit = Unit()
 def spec_prefill_modeling(model = 'meta-llama/Llama-3.1-70B', draft_model = 'meta-llama/meta-llama-3.1-8b',
     batch_size = 1, 
     input_tokens = 1024,       # Input context tokens
-    system_name = 'A100_40GB_GPU', system_eff = 1, bits='bf16', debug= False, model_profilling = False,
+    system_name = 'A100_40GB_GPU', system_eff = None, bits=None, debug= False, model_profilling = False,
     tensor_parallel = 1, pipeline_parallel = 1,
     expert_parallel = 1,
-    collective_strategy='GenZ', network_config=None,
-    parallelism_hierarchy = "TP{1}_EP{1}_PP{1}",
+    collective_strategy=None, network_config=None,
+    parallelism_hierarchy=None,
     model_offload = False, ceff = None, meff = None):
 
     if pipeline_parallel > 1:
@@ -33,9 +33,11 @@ def spec_prefill_modeling(model = 'meta-llama/Llama-3.1-70B', draft_model = 'met
     ### System Declaration
     ##################################################################################################
 
-    system = get_inference_system(system_name = system_name, bits = bits, ceff=system_eff , meff=system_eff,
-                                network_config=network_config, 
-                                collective_strategy=collective_strategy, 
+    _ceff = ceff if ceff is not None else system_eff
+    _meff = meff if meff is not None else system_eff
+    system = get_inference_system(system_name = system_name, bits = bits, ceff=_ceff, meff=_meff,
+                                network_config=network_config,
+                                collective_strategy=collective_strategy,
                                 parallelism_hierarchy=parallelism_hierarchy )
 
     ##################################################################################################
@@ -169,11 +171,11 @@ def spec_decode_modeling(model = 'meta-llama/Llama-3.1-70B', draft_model = 'meta
     # This gamma parameter in the paper: arxiv.org/pdf/2211.17192
     num_parallel_tokens = 8,    # Number of tokens to be decoded in parallel by the full model.
                                 # This means after num_parallel_tokens decode steps of the draft model, num_parallel_tokens tokens are checked in parallel by the full model.
-    system_name = 'A100_40GB_GPU', system_eff = 1, bits='bf16', debug= False, model_profilling = False,
+    system_name = 'A100_40GB_GPU', system_eff = None, bits=None, debug= False, model_profilling = False,
     tensor_parallel = 1, pipeline_parallel = 1,
     expert_parallel = 1,
-    collective_strategy='GenZ', network_config=None,
-    parallelism_hierarchy = "TP{1}_EP{1}_PP{1}",
+    collective_strategy=None, network_config=None,
+    parallelism_hierarchy=None,
     model_offload = False, ceff = None, meff = None):
 
     if pipeline_parallel > 1:
@@ -189,9 +191,11 @@ def spec_decode_modeling(model = 'meta-llama/Llama-3.1-70B', draft_model = 'meta
     ### System Declaration
     ##################################################################################################
 
-    system = get_inference_system(system_name = system_name, bits = bits, ceff=system_eff , meff=system_eff,
-                                network_config=network_config, 
-                                collective_strategy=collective_strategy, 
+    _ceff = ceff if ceff is not None else system_eff
+    _meff = meff if meff is not None else system_eff
+    system = get_inference_system(system_name = system_name, bits = bits, ceff=_ceff, meff=_meff,
+                                network_config=network_config,
+                                collective_strategy=collective_strategy,
                                 parallelism_hierarchy=parallelism_hierarchy )
 
     ##################################################################################################

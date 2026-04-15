@@ -74,10 +74,24 @@ def get_offload_system(system, total_memory_req, debug):
             print(f'New BW:{new_offchip_BW}')
     return system
 
-def get_inference_system(system_name='A100_40GB_GPU', bits='bf16', ceff=1, meff=1,
-                        collective_strategy='GenZ', network_config=None,
-                        parallelism_hierarchy = "TP{1}_EP{1}_PP{1}",
+def get_inference_system(system_name='A100_40GB_GPU', bits=None, ceff=None, meff=None,
+                        collective_strategy=None, network_config=None,
+                        parallelism_hierarchy=None,
                          **kwargs):
+    """Resolve ``system_name`` into a ``System`` object.
+
+    For the ``bits`` / ``ceff`` / ``meff`` / ``collective_strategy`` /
+    ``parallelism_hierarchy`` args, ``None`` means "caller did not set
+    this" — when ``system_name`` is a pre-built ``System``, those fields
+    are preserved (not overwritten with a default). When a fresh System
+    is constructed from a string/dict, ``None`` resolves to the safe
+    default (``bf16``, 1, 1, ``GenZ``, etc.).
+
+    ``network_config`` keeps its legacy semantic where ``None`` is a
+    meaningful value ("no network config"); to avoid clobbering
+    pre-built System.network_config we still only overwrite when the
+    existing field is absent / not set.
+    """
     ##################################################################################################
     ### System Declaration
     ##################################################################################################
@@ -94,16 +108,32 @@ def get_inference_system(system_name='A100_40GB_GPU', bits='bf16', ceff=1, meff=
             C2C_BW = system_name.get('ICN',150)
             C2C_LL = system_name.get('ICN_LL',1)
     elif isinstance(system_name, System):
-        system_name.bits = bits
-        system_name.compute_efficiency = ceff
-        system_name.memory_efficiency = meff
-        system_name.collective_strategy = collective_strategy
-        system_name.parallelism_hierarchy = parallelism_hierarchy
-        system_name.network_config = network_config 
+        if bits is not None:
+            system_name.bits = bits
+        if ceff is not None:
+            system_name.compute_efficiency = ceff
+        if meff is not None:
+            system_name.memory_efficiency = meff
+        if collective_strategy is not None:
+            system_name.collective_strategy = collective_strategy
+        if parallelism_hierarchy is not None:
+            system_name.parallelism_hierarchy = parallelism_hierarchy
+        if network_config is not None:
+            system_name.network_config = network_config
         return system_name
     else:
         raise TypeError(f'System should be weight str or dict with Flops,Memory, ICN values: System_name: {system_name}')
 
-    return System(unit,frequency=1000 , flops=NUM_FLOPS, off_chip_mem_size=(per_chip_memory*1024), compute_efficiency=ceff, memory_efficiency=meff,
-                    offchip_mem_bw=OFFCHIP_MEM_BW, bits=bits, external_mem_bw=OFFLOAD_BW, interchip_link_bw=C2C_BW, interchip_link_latency=C2C_LL, 
-                    collective_strategy=collective_strategy, network_config=network_config, parallelism_hierarchy = parallelism_hierarchy)
+    # Fresh-System construction: resolve None sentinels to safe defaults.
+    _bits = 'bf16' if bits is None else bits
+    _ceff = 1 if ceff is None else ceff
+    _meff = 1 if meff is None else meff
+    _collective_strategy = 'GenZ' if collective_strategy is None else collective_strategy
+    _parallelism_hierarchy = "TP{1}_EP{1}_PP{1}" if parallelism_hierarchy is None else parallelism_hierarchy
+
+    return System(unit, frequency=1000, flops=NUM_FLOPS, off_chip_mem_size=(per_chip_memory*1024),
+                    compute_efficiency=_ceff, memory_efficiency=_meff,
+                    offchip_mem_bw=OFFCHIP_MEM_BW, bits=_bits, external_mem_bw=OFFLOAD_BW,
+                    interchip_link_bw=C2C_BW, interchip_link_latency=C2C_LL,
+                    collective_strategy=_collective_strategy, network_config=network_config,
+                    parallelism_hierarchy=_parallelism_hierarchy)
