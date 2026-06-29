@@ -4,6 +4,8 @@ system_configs: Dict[str, Dict[str, Any]] = {
     'A100_40GB_GPU' : {'Flops': 312, 'Memory_size': 40, 'Memory_BW': 1600, 'ICN': 150 , 'real_values':True},
     'A100_80GB_GPU' : {'Flops': 312, 'Memory_size': 80, 'Memory_BW': 2039, 'ICN': 150 , 'real_values':True},
     'H100_GPU'  : {'Flops': 989, 'Memory_size': 80, 'Memory_BW': 3400, 'ICN': 450 , 'real_values':True},
+    # Consumer Ampere (24 GB). Flops = FP16 tensor TFLOPs; Memory_BW GB/s; ICN = PCIe4 p2p GB/s.
+    'rtx_3090'  : {'Flops': 71, 'Memory_size': 24, 'Memory_BW': 936, 'ICN': 25 , 'real_values':True},
     'GH200_GPU' : {'Flops': 1979, 'Memory_size': 144, 'Memory_BW': 4900, 'ICN': 450 , 'real_values':True},
     # https://resources.nvidia.com/en-us-blackwell-architecture?ncid=no-ncid
     "B100" : {'Flops': 3500, 'Memory_size': 192, 'Memory_BW': 8000, 'ICN': 900, 'ICN_LL':0.25, 'real_values':True},
