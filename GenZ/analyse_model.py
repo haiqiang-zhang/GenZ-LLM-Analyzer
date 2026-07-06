@@ -180,8 +180,13 @@ def get_runtime_breakdown(df:pd.DataFrame) -> RuntimeBreakdown:
     return runtime_breakdown
 
 
-def analysis_model(model_dims, system=None, unit=Unit(), densities = None,intermediate_on_chip=False,
+def analysis_model(model_dims, system=None, unit=None, densities = None,intermediate_on_chip=False,
                     beam_size=1, beam_merge=False, model_characterstics=False):
+    # THREAD SAFETY (07-06): mutable default arguments (`unit=Unit()`) are
+    # evaluated ONCE and shared by every call that omits them — a latent
+    # cross-thread coupling. Construct per call instead.
+    if unit is None:
+        unit = Unit()
     roofline_list = []
     if densities is None:
         densities = np.ones((len(model_dims), 3), dtype=float)
@@ -234,8 +239,16 @@ def analysis_model(model_dims, system=None, unit=Unit(), densities = None,interm
     return df
 
 
-def get_model_df(model, system=System(), unit=Unit(), batch_size=1, data_path="/tmp/genz/data", intermediate_on_chip=False,
+def get_model_df(model, system=None, unit=None, batch_size=1, data_path="/tmp/genz/data", intermediate_on_chip=False,
                     beam_size=1, beam_merge=False, model_characterstics=False):
+    # THREAD SAFETY (07-06): the old `system=System(), unit=Unit()` defaults
+    # were evaluated once at import and SHARED across every call that omitted
+    # them — module-level mutable state coupling unrelated concurrent calls.
+    # Construct per call; explicit arguments behave exactly as before.
+    if system is None:
+        system = System()
+    if unit is None:
+        unit = Unit()
     m_file_path = os.path.join(data_path,"model")
     sparsity_file_path = os.path.join(data_path,"sparsity")
     m_file = os.path.join(m_file_path, model)

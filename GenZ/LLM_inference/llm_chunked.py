@@ -6,7 +6,7 @@ from GenZ.analyse_model import *
 import warnings
 from GenZ.collective_times import *
 from GenZ.utils.plot_rooflines import *
-from GenZ.Models import create_full_chunked_model
+from GenZ.Models import create_full_chunked_model, remove_layer_file
 from math import ceil
 
 unit = Unit()
@@ -84,6 +84,7 @@ def chunked_moddeling(model = 'BERT',
     #                                         expert_parallel=expert_parallel)
 
     model_df = get_model_df(model_chunked, system, unit, 1,  intermediate_on_chip=True )
+    remove_layer_file(model_chunked)   # temp CSV: final read done (07-06 leak fix)
     summary_table = get_summary_table(model_df, unit)
 
     if debug:

@@ -6,7 +6,7 @@ from GenZ.analyse_model import *
 import warnings
 from GenZ.collective_times import *
 from GenZ.utils.plot_rooflines import *
-from GenZ.Models import create_full_decode_model
+from GenZ.Models import create_full_decode_model, remove_layer_file
 from math import ceil
 
 unit = Unit()
@@ -95,6 +95,7 @@ def decode_moddeling(model = 'BERT', batch_size = 1, input_tokens = 4096,
     #                                         expert_parallel=expert_parallel)
 
     model_df = get_model_df(model_decode, system, unit, ub*Bb,  intermediate_on_chip=True , beam_merge= (Bb > 1), beam_size= Bb)
+    remove_layer_file(model_decode)   # temp CSV: final read done (07-06 leak fix)
     summary_table = get_summary_table(model_df, unit)
 
     if debug:

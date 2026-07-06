@@ -6,7 +6,7 @@ from GenZ.analyse_model import *
 import warnings
 from GenZ.collective_times import *
 from GenZ.utils.plot_rooflines import *
-from GenZ.Models import get_configs, create_full_prefill_model
+from GenZ.Models import get_configs, create_full_prefill_model, remove_layer_file
 
 unit = Unit()
 
@@ -85,6 +85,7 @@ def prefill_moddeling(model = 'BERT', batch_size = 1, input_tokens = 4096,
     #                                             expert_parallel=expert_parallel)
     system.parallelism_hierarchy = parallelism_hierarchy
     model_df = get_model_df(model_prefill, system, unit, ub, intermediate_on_chip=True )
+    remove_layer_file(model_prefill)   # temp CSV: final read done (07-06 leak fix)
     summary_table = get_summary_table(model_df, unit)
     prefill_latency = summary_table[f'Latency ({unit.unit_time})'].values[0]                 # Latency in millisec
 

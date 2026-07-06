@@ -63,6 +63,24 @@ def end_repeat_layers(num_repeat:int):
 
 DATA_PATH = "/tmp/genz/data/"
 
+
+def remove_layer_file(file_name, data_path: str = None) -> None:
+    """Best-effort removal of a ``save_layers`` temp CSV after its FINAL read.
+
+    Every modeling call writes a uuid-named layer CSV and reads it back via
+    ``get_model_df`` — but nothing ever deleted them, so a long-running cost
+    model accumulates tens of thousands of orphan files (observed: 67k+ in
+    /tmp/genz/data/model; each one also a wasted fs round-trip). Modeling
+    entry points call this after their last ``get_model_df`` on the file.
+    Failures are swallowed: cleanup must never break a modeling call."""
+    if not isinstance(file_name, str) or not file_name:
+        return
+    try:
+        os.remove(os.path.join(data_path or DATA_PATH, "model", file_name))
+    except OSError:
+        pass
+
+
 def create_inference_moe_prefill_layer(input_sequence_length, name='GPT-2', data_path=DATA_PATH,
                          **args):
     model_config = get_configs(name)

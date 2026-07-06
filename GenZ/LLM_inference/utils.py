@@ -108,19 +108,28 @@ def get_inference_system(system_name='A100_40GB_GPU', bits=None, ceff=None, meff
             C2C_BW = system_name.get('ICN',150)
             C2C_LL = system_name.get('ICN_LL',1)
     elif isinstance(system_name, System):
+        # THREAD SAFETY (07-06): configure a shallow COPY, never the caller's
+        # object. The previous in-place writes made every System-instance
+        # caller share mutable state across concurrent modeling calls (two
+        # threads pricing with different parallelism_hierarchy/ceff corrupt
+        # each other mid-computation). The written fields are all
+        # scalars/strings, so a shallow copy fully isolates them; heavier
+        # attributes (unit, network_config objects) stay shared read-only.
+        import copy as _copy
+        system_copy = _copy.copy(system_name)
         if bits is not None:
-            system_name.bits = bits
+            system_copy.bits = bits
         if ceff is not None:
-            system_name.compute_efficiency = ceff
+            system_copy.compute_efficiency = ceff
         if meff is not None:
-            system_name.memory_efficiency = meff
+            system_copy.memory_efficiency = meff
         if collective_strategy is not None:
-            system_name.collective_strategy = collective_strategy
+            system_copy.collective_strategy = collective_strategy
         if parallelism_hierarchy is not None:
-            system_name.parallelism_hierarchy = parallelism_hierarchy
+            system_copy.parallelism_hierarchy = parallelism_hierarchy
         if network_config is not None:
-            system_name.network_config = network_config
-        return system_name
+            system_copy.network_config = network_config
+        return system_copy
     else:
         raise TypeError(f'System should be weight str or dict with Flops,Memory, ICN values: System_name: {system_name}')
 
