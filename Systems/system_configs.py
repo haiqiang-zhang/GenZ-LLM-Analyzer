@@ -3,7 +3,16 @@ from typing import Any, Dict
 system_configs: Dict[str, Dict[str, Any]] = {
     'A100_40GB_GPU' : {'Flops': 312, 'Memory_size': 40, 'Memory_BW': 1600, 'ICN': 150 , 'real_values':True},
     'A100_80GB_GPU' : {'Flops': 312, 'Memory_size': 80, 'Memory_BW': 2039, 'ICN': 150 , 'real_values':True},
-    'H100_GPU'  : {'Flops': 989, 'Memory_size': 80, 'Memory_BW': 3400, 'ICN': 450 , 'real_values':True},
+    # This repo's H100_GPU records come from the sgs 4x "NVIDIA H100 NVL"
+    # box (nvidia-smi: 95830 MiB/card), NOT the SXM part the old entry
+    # described. Actual NVL specs: FP16 tensor dense 835 TFLOPS (SXM 989),
+    # HBM3 3938 GB/s (SXM 3350), 93.6 GiB usable (SXM 80). The old entry
+    # faked a weight-offload cliff at 14B batch 256 (predicted 94 s vs
+    # measured 31 s) and pinned meff at the 1.0 bound for 7B/14B (the fit
+    # wanted more bandwidth than the spec allowed). ALL H100 llm_sim
+    # records are refit from their stored grids against these values (r12).
+    # NVLink stays ICN 450 GB/s/direction (18-link NVL bridge, 900 bidi).
+    'H100_GPU'  : {'Flops': 835, 'Memory_size': 93, 'Memory_BW': 3938, 'ICN': 450 , 'real_values':True},
     # Consumer Ampere (24 GB). Flops = FP16 tensor TFLOPs; Memory_BW GB/s; ICN = PCIe4 p2p GB/s.
     'rtx_3090'  : {'Flops': 71, 'Memory_size': 24, 'Memory_BW': 936, 'ICN': 25 , 'real_values':True},
     'GH200_GPU' : {'Flops': 1979, 'Memory_size': 144, 'Memory_BW': 4900, 'ICN': 450 , 'real_values':True},
