@@ -24,7 +24,11 @@ class Unit(object):
         elif type == 'T':       ## Time
             unit_value = self.unit_dicts[self.unit_time[0]]
         elif type == 'BW':      ## Bandwidth
-            unit_value = self.binary_dicts[self.unit_bw[0]]
+            # Bandwidth specifications use SI units (GB/s = 10^9 bytes/s),
+            # unlike memory capacities which use binary MiB/GiB. Hardware
+            # datasheets and rag-stack's interconnect schema both follow this
+            # convention, so treating GB/s as GiB/s overstates bandwidth 7.37%.
+            unit_value = self.unit_dicts[self.unit_bw[0]]
         elif type == 'F':       ## Frequency
             unit_value = self.unit_dicts[self.unit_freq[0]]
         elif type == 'E':       ## Energy
@@ -42,4 +46,3 @@ class Unit(object):
     def unit_to_raw(self, data, type='C'):
         unit_value = self.get_unit_value(type=type)
         return data * unit_value
-

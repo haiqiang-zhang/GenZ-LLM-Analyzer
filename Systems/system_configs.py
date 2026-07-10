@@ -9,10 +9,12 @@ system_configs: Dict[str, Dict[str, Any]] = {
     # HBM3 3938 GB/s (SXM 3350), 93.6 GiB usable (SXM 80). The old entry
     # faked a weight-offload cliff at 14B batch 256 (predicted 94 s vs
     # measured 31 s) and pinned meff at the 1.0 bound for 7B/14B (the fit
-    # wanted more bandwidth than the spec allowed). ALL H100 llm_sim
-    # records are refit from their stored grids against these values (r12).
-    # NVLink stays ICN 450 GB/s/direction (18-link NVL bridge, 900 bidi).
-    'H100_GPU'  : {'Flops': 835, 'Memory_size': 93, 'Memory_BW': 3938, 'ICN': 450 , 'real_values':True},
+    # wanted more bandwidth than the spec allowed). Stored H100 llm_sim
+    # records were refit against the compute/memory values in r12; changing
+    # the physical ICN below still requires a separate generator-TP refit.
+    # Three NVLink bridges provide 600 GB/s bidirectional per H100 NVL pair,
+    # i.e. 300 GB/s in the one-direction payload convention consumed by GenZ.
+    'H100_GPU'  : {'Flops': 835, 'Memory_size': 93, 'Memory_BW': 3938, 'ICN': 300 , 'real_values':True},
     # Consumer Ampere (24 GB). Flops = FP16 tensor TFLOPs; Memory_BW GB/s; ICN = PCIe4 p2p GB/s.
     'rtx_3090'  : {'Flops': 71, 'Memory_size': 24, 'Memory_BW': 936, 'ICN': 25 , 'real_values':True},
     'GH200_GPU' : {'Flops': 1979, 'Memory_size': 144, 'Memory_BW': 4900, 'ICN': 450 , 'real_values':True},
