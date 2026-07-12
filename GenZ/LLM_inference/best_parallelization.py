@@ -9,8 +9,7 @@ from GenZ.analyse_model import *
 import warnings
 from GenZ.LLM_inference import decode_moddeling, prefill_moddeling
 from paretoset import paretoset
-import itertools
-from GenZ.Models import get_configs
+from GenZ.parallelism import valid_parallelism_configs
 
 unit = Unit()
 
@@ -19,25 +18,24 @@ def factors(n):
                 for i in range(1, int(n**0.5)+1) if n % i == 0) for x in tup]
 
 def get_various_parallization(model='llama2_7b', total_nodes=8):
-    model_config = get_configs(model)
-
-    if total_nodes == 1:
-        return {(1,1)}
-    elif total_nodes < 1:
+    if total_nodes < 1:
         raise ValueError(f'Num of Nodes:{total_nodes} should be >= 1')
 
-    H = model_config.num_attention_heads
-    num_layers = model_config.num_decoder_layers
-
-    TP_parallelism = np.sort(factors(H))[::-1]
-    PP_parallelism = np.sort(factors(num_layers))[::-1]
-
-    parallelism_combinations = set()
-
-    for TP, PP in itertools.product(TP_parallelism, PP_parallelism):
-        if TP * PP < total_nodes and TP*PP >= total_nodes//2:
-            parallelism_combinations.add((TP, PP))
-    return parallelism_combinations
+    # Preserve this legacy API's chip-budget window (at least half the
+    # available nodes, but strictly fewer than ``total_nodes``) while using
+    # the same model-aware feasibility rules as every other GenZ caller.
+    checks = valid_parallelism_configs(
+        model,
+        total_chips=total_nodes,
+        exact_chips=False,
+    )
+    if total_nodes == 1:
+        return {check.parallelism for check in checks}
+    return {
+        check.parallelism
+        for check in checks
+        if total_nodes // 2 <= np.prod(check.parallelism) < total_nodes
+    }
 
 def get_best_parallization_strategy(
         stage='decode', model='llama2_7b', total_nodes=8, batch_size = 1, beam_size = 1,

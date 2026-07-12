@@ -71,9 +71,23 @@ class ModelConfig():
         expert_layer_period = 1,
         # Quality of Model
         model_quality: Optional[QualityMetricsCollection] = None,
+        aliases=None,
         **kwargs,
     ):
         self.model = model
+        # Alternate registry names for architecture-identical checkpoints
+        # (for example, an instruction-tuned checkpoint and its base model).
+        # Aliases are model metadata, so consumers never need model-name
+        # conditionals to recover attention/KV-head geometry.
+        if aliases is None:
+            aliases = ()
+        elif isinstance(aliases, str):
+            aliases = (aliases,)
+        else:
+            aliases = tuple(aliases)
+        if not all(isinstance(alias, str) and alias for alias in aliases):
+            raise ValueError("ModelConfig aliases must be non-empty strings")
+        self.aliases = aliases
         self.vocab_size = vocab_size
         self.max_model_len = max_model_len      ## Maximum length of the model
         self.num_decoder_layers = num_decoder_layers
@@ -185,9 +199,10 @@ def get_all_model_configs(file_name):
     model_configs = {}
     for name, obj in inspect.getmembers(current_module):
         if isinstance(obj, ModelConfig):
-            model_configs[obj.model] = obj
-            if "/" in obj.model:
-                model_configs[obj.model.split('/')[1]] = obj
+            for registry_name in (obj.model, *obj.aliases):
+                model_configs[registry_name] = obj
+                if "/" in registry_name:
+                    model_configs[registry_name.split('/', 1)[1]] = obj
     return model_configs
 
 class ModelCollection():
@@ -200,7 +215,10 @@ class ModelCollection():
     def add_model(self, model_config):
         if not isinstance(model_config, ModelConfig):
             raise TypeError("model_config must be an instance of ModelConfig")
-        self.models[model_config.model] = model_config
+        for registry_name in (model_config.model, *model_config.aliases):
+            self.models[registry_name] = model_config
+            if "/" in registry_name:
+                self.models[registry_name.split('/', 1)[1]] = model_config
 
     def get_model(self, model_name):
         model_name_lower = model_name.lower()

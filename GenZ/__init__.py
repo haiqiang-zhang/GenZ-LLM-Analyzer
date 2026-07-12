@@ -26,4 +26,16 @@ from .Models import (
     create_full_decode_model,
     create_full_chunked_model,
 )
-from .parallelism import ParallelismConfig
+from .parallelism import (
+    DisaggregatedParallelismCheck,
+    GENERIC_KV_TRANSFER_CAPABILITIES,
+    KVShardLayout,
+    KVTransferCapabilities,
+    ModelParallelismCheck,
+    NIXL_KV_TRANSFER_CAPABILITIES,
+    ParallelismConfig,
+    ParallelismValidationError,
+    check_disaggregated_parallelism,
+    check_model_parallelism,
+    valid_parallelism_configs,
+)

@@ -1,17 +1,38 @@
 from GenZ.Models import ModelConfig, ResidencyInfo, OpType, CollectiveType
-from GenZ.parallelism import ParallelismConfig
-from math import ceil
+from GenZ.parallelism import ParallelismConfig, check_model_parallelism
+
+
+def _attention_head_layout(
+    model_config: ModelConfig,
+    parallelism_config: ParallelismConfig,
+) -> tuple[int, int, int]:
+    """Return (effective TP, query heads/rank, KV heads/rank), or fail."""
+
+    effective_tp = (
+        parallelism_config.tensor_parallel
+        * parallelism_config.expert_parallel
+    )
+    check = check_model_parallelism(
+        model_config,
+        tensor_parallel=effective_tp,
+        pipeline_parallel=1,
+    ).require()
+    assert check.attention_heads_per_rank is not None
+    assert check.kv_layout is not None
+    return (
+        effective_tp,
+        check.attention_heads_per_rank,
+        check.kv_layout.kv_heads_per_rank,
+    )
 
 def mha_flash_attention_prefill(model_config:ModelConfig, parallelism_config:ParallelismConfig, input_sequence_length:int):
-    H = model_config.num_attention_heads
-    Hkv = model_config.num_key_value_heads
     D = model_config.hidden_size
     Dq = model_config.head_dim
 
-    tp = parallelism_config.tensor_parallel * parallelism_config.expert_parallel
+    tp, per_node_H, per_node_Hkv = _attention_head_layout(
+        model_config, parallelism_config
+    )
     sp = parallelism_config.sequence_parallel
-    per_node_H = max(ceil(H / tp), 1)
-    per_node_Hkv = max(ceil(Hkv / tp), 1)
 
 # TODO: implement Latent attention: https://www.youtube.com/watch?v=0VLAoVGf_74
 # https://arxiv.org/pdf/2405.04434
@@ -50,17 +71,13 @@ def mha_flash_attention_prefill(model_config:ModelConfig, parallelism_config:Par
     return QKV + logit + attend + output + sync
 
 def mha_flash_attention_decode(model_config:ModelConfig, parallelism_config:ParallelismConfig, input_sequence_length:int, output_gen_tokens:int):
-    H = model_config.num_attention_heads
-    Hkv = model_config.num_key_value_heads
     D = model_config.hidden_size
     Dq = model_config.head_dim
 
-    tp = parallelism_config.tensor_parallel * parallelism_config.expert_parallel
+    tp, per_node_H, per_node_Hkv = _attention_head_layout(
+        model_config, parallelism_config
+    )
     sp = parallelism_config.sequence_parallel
-    dp = parallelism_config.data_parallel
-
-    per_node_H = max(ceil(H / tp), 1)
-    per_node_Hkv = max(ceil(Hkv / tp), 1)
 
     query =         [["QKV", (per_node_H*Dq + 2*per_node_Hkv*Dq), 1, D, 1, 1, ResidencyInfo.AC_onchip, OpType.GEMM]]
     logit_pre =     [["Logit Pre",per_node_H, 1, input_sequence_length//sp, Dq, per_node_Hkv, ResidencyInfo.AC_onchip, OpType.Logit_BM_PREFILL]]
@@ -97,17 +114,13 @@ def mha_flash_attention_chunked(model_config:ModelConfig, parallelism_config:Par
             list: A list of layers with their respective configurations for the MHA with flash attention.
 
     '''
-    H = model_config.num_attention_heads
-    Hkv = model_config.num_key_value_heads
     D = model_config.hidden_size
     Dq = model_config.head_dim
 
-    tp = parallelism_config.tensor_parallel * parallelism_config.expert_parallel
+    tp, per_node_H, per_node_Hkv = _attention_head_layout(
+        model_config, parallelism_config
+    )
     sp = parallelism_config.sequence_parallel
-    dp = parallelism_config.data_parallel
-
-    per_node_H = max(ceil(H / tp), 1)
-    per_node_Hkv = max(ceil(Hkv / tp), 1)
 
 
     layers = []
@@ -149,4 +162,3 @@ def mha_flash_attention_chunked(model_config:ModelConfig, parallelism_config:Par
         sync = []
 
     return layers
-

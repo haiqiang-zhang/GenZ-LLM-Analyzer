@@ -3,7 +3,7 @@ import os
 from math import ceil
 import numpy as np
 from datetime import datetime
-from GenZ.parallelism import ParallelismConfig
+from GenZ.parallelism import ParallelismConfig, check_model_parallelism
 
 from GenZ.Models.default_models import ModelConfig, MODEL_DICT
 
@@ -145,6 +145,12 @@ def create_full_prefill_model(
     model_config = get_configs(name)
     pipeline_stages = args.get('pipeline_parallel',1)
 
+    check_model_parallelism(
+        model_config,
+        tensor_parallel=args.get('tensor_parallel', 1),
+        pipeline_parallel=pipeline_stages,
+    ).require()
+
     parallelism_config = ParallelismConfig(
         tensor_parallel=args.get('tensor_parallel',1),
         expert_parallel=args.get('expert_parallel',1),
@@ -227,6 +233,12 @@ def create_full_decode_model(
     model_config = get_configs(name)
     pipeline_stages = args.get('pipeline_parallel', 1)
 
+    check_model_parallelism(
+        model_config,
+        tensor_parallel=args.get('tensor_parallel', 1),
+        pipeline_parallel=pipeline_stages,
+    ).require()
+
     parallelism_config = ParallelismConfig(
         tensor_parallel=args.get('tensor_parallel', 1),
         expert_parallel=args.get('expert_parallel', 1),
@@ -271,6 +283,12 @@ def create_full_chunked_model(name:str ='GPT-2',
     ## Prefill KV sizes is a list of request by request, num tokens calculated and to be calculated.
     model_config = get_configs(name)
     pipeline_stages = args.get('pipeline_parallel',1)
+
+    check_model_parallelism(
+        model_config,
+        tensor_parallel=args.get('tensor_parallel', 1),
+        pipeline_parallel=pipeline_stages,
+    ).require()
 
     parallelism_config = ParallelismConfig(
         tensor_parallel=args.get('tensor_parallel',1),

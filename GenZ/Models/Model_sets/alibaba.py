@@ -108,6 +108,7 @@ qwen2_0_5b_config = ModelConfig(model='Qwen/Qwen2-0.5B',
 
 # https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct/blob/main/config.json
 qwen2_1_5b_config = ModelConfig(model='Qwen/Qwen2.5-1.5B',
+    aliases=('Qwen/Qwen2.5-1.5B-Instruct',),
     hidden_size=1536, num_attention_heads=12,
     num_key_value_heads=2, num_ffi = 2,
     intermediate_size=8960, num_decoder_layers=28,
@@ -115,6 +116,7 @@ qwen2_1_5b_config = ModelConfig(model='Qwen/Qwen2.5-1.5B',
 
 # https://huggingface.co/Qwen/Qwen2.5-3B-Instruct/blob/main/config.json
 qwen2_3b_config = ModelConfig(model='Qwen/Qwen2.5-3B',
+    aliases=('Qwen/Qwen2.5-3B-Instruct',),
     hidden_size=2048, num_attention_heads=16,
     num_key_value_heads=2, num_ffi = 2,
     intermediate_size=11008, num_decoder_layers=36,
@@ -122,6 +124,7 @@ qwen2_3b_config = ModelConfig(model='Qwen/Qwen2.5-3B',
 
 # https://huggingface.co/Qwen/Qwen2.5-7B-Instruct/blob/main/config.json
 qwen2_7b_config = ModelConfig(model='Qwen/Qwen2.5-7B',
+    aliases=('Qwen/Qwen2.5-7B-Instruct',),
     hidden_size=3584, num_attention_heads=28,
     num_key_value_heads=4, num_ffi = 2,
     intermediate_size=18944, num_decoder_layers=28,
@@ -129,6 +132,7 @@ qwen2_7b_config = ModelConfig(model='Qwen/Qwen2.5-7B',
 
 # https://huggingface.co/Qwen/Qwen2.5-14B-Instruct/blob/main/config.json
 qwen2_14b_config = ModelConfig(model='Qwen/Qwen2.5-14B',
+    aliases=('Qwen/Qwen2.5-14B-Instruct',),
     hidden_size=5120, num_attention_heads=40,
     num_key_value_heads=8, num_ffi = 2,
     intermediate_size=13824, num_decoder_layers=48,
@@ -178,4 +182,3 @@ qwen3_32b_config = ModelConfig(model='Qwen/Qwen3-32B',
 
 
 alibaba_models = get_all_model_configs(__name__)
-
