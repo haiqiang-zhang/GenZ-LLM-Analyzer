@@ -121,61 +121,76 @@ def simplify_df(df:pd.DataFrame):
                 new_df = pd.concat([new_df, pd.DataFrame([new_row])], ignore_index=True)
     return new_df
 
+def _add_runtime_breakdown_layer(runtime_breakdown, layer_name, layer_latency):
+    """Accumulate one already-repeat-scaled operator latency."""
+    if layer_name in ['embeddings', 'classifier']:
+        runtime_breakdown.Embedding += layer_latency
+    elif layer_name in ['QKV', 'Out Proj']:
+        runtime_breakdown.MHA += layer_latency
+        runtime_breakdown.QKVO_layers += layer_latency
+    elif layer_name in ['Logit', 'Attend', 'Logit Pre', 'Logit Suf',
+                        'Attend Pre', 'Attend Suf', 'Logit Dec', 'Attend Dec']:
+        runtime_breakdown.MHA += layer_latency
+        runtime_breakdown.LA_layers += layer_latency
+    elif layer_name in ['Gate', 'up+gate', 'down', 'shared up+gate', 'shared down']:
+        runtime_breakdown.FFN += layer_latency
+        runtime_breakdown.FFN_layers += layer_latency
+    elif layer_name in ['Message Pass']:
+        runtime_breakdown.Collective += layer_latency
+        runtime_breakdown.Send_Recv_time += layer_latency
+    elif layer_name in ['MHA AR', 'Mamba AR']:
+        runtime_breakdown.MHA += layer_latency
+        runtime_breakdown.Collective += layer_latency
+        runtime_breakdown.AR_time += layer_latency
+    elif layer_name in ['Gate AR', 'FFN AR']:
+        runtime_breakdown.FFN += layer_latency
+        runtime_breakdown.Collective += layer_latency
+        runtime_breakdown.AR_time += layer_latency
+    elif layer_name in ['Dispatch A2A', 'Collect A2A']:
+        runtime_breakdown.Collective += layer_latency
+        runtime_breakdown.A2A_time += layer_latency
+        runtime_breakdown.FFN += layer_latency
+    elif layer_name in ['Emb_AR', 'classifier_AG']:
+        runtime_breakdown.AR_time += layer_latency
+        runtime_breakdown.Embedding += layer_latency
+        runtime_breakdown.Collective += layer_latency
+    elif layer_name in ['Inproj', 'Conv', 'BC proj', 'xt proj', 'deltaA', 'deltaB', 'deltaBu', 'x calc', 'y calc', 'D addition', 'out mult z', 'Out proj', 'Mamba AR']:
+        runtime_breakdown.Mamba_time += layer_latency
+    else:
+        raise ValueError(f'Layer Name:{layer_name} not found in the breakdown function')
+
+
 def get_runtime_breakdown(df:pd.DataFrame) -> RuntimeBreakdown:
-    df = simplify_df(df)
+    """Return the runtime diagnostic without materializing an expanded frame.
+
+    ``simplify_df`` used to copy every operator row into a new pandas frame,
+    multiplying all numeric columns while doing so.  RuntimeBreakdown consumes
+    only the latency column.  Apply the same nested Repeat/EndRepeat multiplier
+    directly in the original row order: this preserves the exact arithmetic
+    and public result while avoiding the dominant cost in scalar GenZ calls.
+    """
     unit = Unit()
     runtime_breakdown = RuntimeBreakdown()
     assert 'Layer Name' in df.columns, "Layer Name not found in the dataframe"
-    assert f'Latency ({unit.unit_time})' in df.columns, "Latency (ms) not found in the dataframe"
+    assert 'Op Type' in df.columns, "Op Type not found in the dataframe"
+    assert 'Dimension' in df.columns, "Dimension not found in the dataframe"
+    latency_column = f'Latency ({unit.unit_time})'
+    assert latency_column in df.columns, "Latency (ms) not found in the dataframe"
 
-    possible_layer_names = ['embeddings', 'classifier', 'Emb_AR', 'classifier_AG', 
-                            'QKV', 'Out Proj',
-                            'Logit', 'Attend',
-                            'Logit Pre', 'Logit Suf',
-                            'Attend Pre', 'Attend Suf',
-                            'Logit Dec', 'Attend Dec',
-                            'Gate', 'up+gate', 'down',
-                            'Message Pass', 'MHA AR', 'Gate AR',
-                            'Dispatch A2A', 'Collect A2A', 'FFN AR']
-
+    multiplier = 1
     for i in range(len(df)):
-        layer_name = df.loc[i, 'Layer Name']
-        layer_latency = df.loc[i, f'Latency ({unit.unit_time})']
-        if layer_name in ['embeddings', 'classifier']:
-            runtime_breakdown.Embedding += layer_latency
-        elif layer_name in ['QKV', 'Out Proj']:
-            runtime_breakdown.MHA += layer_latency
-            runtime_breakdown.QKVO_layers += layer_latency
-        elif layer_name in ['Logit', 'Attend', 'Logit Pre', 'Logit Suf',
-                            'Attend Pre', 'Attend Suf', 'Logit Dec', 'Attend Dec']:
-            runtime_breakdown.MHA += layer_latency
-            runtime_breakdown.LA_layers += layer_latency
-        elif layer_name in ['Gate', 'up+gate', 'down', 'shared up+gate', 'shared down']:
-            runtime_breakdown.FFN += layer_latency
-            runtime_breakdown.FFN_layers += layer_latency
-        elif layer_name in ['Message Pass']:
-            runtime_breakdown.Collective += layer_latency
-            runtime_breakdown.Send_Recv_time += layer_latency
-        elif layer_name in ['MHA AR', 'Mamba AR']:
-            runtime_breakdown.MHA += layer_latency
-            runtime_breakdown.Collective += layer_latency
-            runtime_breakdown.AR_time += layer_latency
-        elif layer_name in ['Gate AR', 'FFN AR']:
-            runtime_breakdown.FFN += layer_latency
-            runtime_breakdown.Collective += layer_latency
-            runtime_breakdown.AR_time += layer_latency
-        elif layer_name in ['Dispatch A2A', 'Collect A2A']:
-            runtime_breakdown.Collective += layer_latency
-            runtime_breakdown.A2A_time += layer_latency
-            runtime_breakdown.FFN += layer_latency
-        elif layer_name in ['Emb_AR', 'classifier_AG']:
-            runtime_breakdown.AR_time += layer_latency
-            runtime_breakdown.Embedding += layer_latency
-            runtime_breakdown.Collective += layer_latency
-        elif layer_name in ['Inproj', 'Conv', 'BC proj', 'xt proj', 'deltaA', 'deltaB', 'deltaBu', 'x calc', 'y calc', 'D addition', 'out mult z', 'Out proj', 'Mamba AR']:
-            runtime_breakdown.Mamba_time += layer_latency
-        else:
-            raise ValueError(f'Layer Name:{layer_name} not found in the breakdown function')
+        op_type = df.loc[i, 'Op Type']
+        if op_type == 'Repeat':
+            multiplier *= df.loc[i, 'Dimension']
+            continue
+        if op_type == 'EndRepeat':
+            multiplier /= df.loc[i, 'Dimension']
+            continue
+        _add_runtime_breakdown_layer(
+            runtime_breakdown,
+            df.loc[i, 'Layer Name'],
+            df.loc[i, latency_column] * multiplier,
+        )
 
     return runtime_breakdown
 
@@ -286,4 +301,3 @@ def get_model_df(model, system=None, unit=None, batch_size=1, data_path="/tmp/ge
     densities = np.ones((len(model_defs), 3), dtype=float)
 
     return analysis_model(new_model_defs, system, unit, densities, intermediate_on_chip, beam_size, beam_merge, model_characterstics)
-
