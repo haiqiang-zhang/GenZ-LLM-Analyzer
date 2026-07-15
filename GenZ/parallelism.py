@@ -184,8 +184,9 @@ def check_model_parallelism(
     partition across ranks or replicate across ranks, but the relevant width
     must divide exactly in either direction.  Pipeline parallelism may use an
     uneven layer partition (as vLLM does), so it only needs to be no wider than
-    the model's decoder-layer count.  When ``batch_size`` is provided, each PP
-    stage must receive at least one request.
+    the model's decoder-layer count.  ``batch_size`` is validated when supplied
+    but does not constrain PP width: every stage receives the same complete
+    scheduler-step tensor, including when one resident request traverses PP>1.
 
     Unknown registry names fail closed in the returned result.  Callers can
     support an external model without editing this function by passing a fully
@@ -330,17 +331,6 @@ def check_model_parallelism(
                 pipeline_parallel=pp,
             )
         assert batch is not None
-        if batch < pp:
-            return _invalid_model_check(
-                code="pipeline_batch_too_small",
-                reason=(
-                    f"batch_size={batch} is smaller than pipeline_parallel={pp}; "
-                    "at least one request per pipeline stage is required"
-                ),
-                model=config,
-                tensor_parallel=tp,
-                pipeline_parallel=pp,
-            )
 
     return ModelParallelismCheck(
         feasible=True,

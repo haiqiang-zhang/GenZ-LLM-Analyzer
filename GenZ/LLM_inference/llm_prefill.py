@@ -15,15 +15,15 @@ def prefill_moddeling(model = 'BERT', batch_size = 1, input_tokens = 4096,
     tensor_parallel = 1, pipeline_parallel = 1, expert_parallel = 1,
     collective_strategy=None, network_config=None,
     parallelism_hierarchy=None,
-    model_offload = False, ceff = None, meff = None):
+    model_offload = False, ceff = None, meff = None,
+    pipeline_layer_partition = None):
 
-    if pipeline_parallel > 1:
-        ub = max(batch_size // pipeline_parallel, 1)
-        num_micro_batches = batch_size // ub
-        if batch_size < pipeline_parallel:
-            warnings.warn(f"Batch size is divided into micro batches for pipeline parallel, micro batch size:{ub}, consider increasing batch size")
-    else:
-        ub = batch_size
+    # vLLM pipeline parallelism forwards one complete scheduler-step tensor
+    # through every layer partition.  Resident sequences are not split into
+    # one micro-batch per PP rank.  The model graph below already contains the
+    # full layer traversal plus PP message passes, so price the full resident
+    # batch at every stage.
+    ub = batch_size
     ##################################################################################################
     ### System Declaration
     ##################################################################################################
@@ -42,16 +42,17 @@ def prefill_moddeling(model = 'BERT', batch_size = 1, input_tokens = 4096,
                                                 input_sequence_length=input_tokens,
                                                 tensor_parallel=tensor_parallel,
                                                 pipeline_parallel=pipeline_parallel,
-                                                expert_parallel=expert_parallel)
+                                                expert_parallel=expert_parallel,
+                                                pipeline_layer_partition=pipeline_layer_partition)
 
 
     model_df = get_model_df(model_prefill, system=system, batch_size = ub, intermediate_on_chip=True , model_characterstics = True)
     summary_table = get_summary_table(model_df, unit, model_characterstics = True)
 
-    model_weights = summary_table[f'Total Weights ({unit.unit_mem})'].values[0]        ## In MB
-    kv_cache = summary_table[f'KV Cache ({unit.unit_mem})'].values[0]                  ## In MB
-
-    total_memory_req = model_weights + kv_cache
+    pipeline_stage_memory_requirements = get_pipeline_stage_memory_requirements(
+        model_df, pipeline_parallel, unit,
+    )
+    max_rank_memory_req = max(pipeline_stage_memory_requirements)
     num_nodes = pipeline_parallel * tensor_parallel * expert_parallel
 
     #################################################################################
@@ -59,15 +60,27 @@ def prefill_moddeling(model = 'BERT', batch_size = 1, input_tokens = 4096,
     #################################################################################
     is_offloaded = False
     per_chip_memory = system.get_off_chip_mem_size()   ## MB
-    if  per_chip_memory  < total_memory_req/pipeline_parallel:
+    if per_chip_memory < max_rank_memory_req:
         if model_offload:
-            system = get_offload_system(system=system, total_memory_req = total_memory_req/pipeline_parallel , debug=debug)
+            system = get_offload_system(
+                system=system,
+                total_memory_req=max_rank_memory_req,
+                debug=debug,
+            )
             warnings.warn(f"Some Parameter offloaded, effective Memory BW:{unit.raw_to_unit(system.offchip_mem_bw, type='BW')} ")
             is_offloaded = True
         elif model_profilling:
-            warnings.warn(f"All params would not fit on chip. System Memory Cap:{per_chip_memory/1024} GB , Weights : {model_weights/1024} GB, KV Cache:{kv_cache/1024} ")
+            warnings.warn(
+                f"All params would not fit on the largest PP rank. System "
+                f"Memory Cap:{per_chip_memory/1024} GB, Max Rank Resident "
+                f"Memory:{max_rank_memory_req/1024} GB"
+            )
         else:
-            raise ValueError(f"All params would not fit on chip. System Memory Cap:{per_chip_memory/1024} GB , Weights : {model_weights/1024} GB, KV Cache:{kv_cache/1024}. \n System:{system_name}")
+            raise ValueError(
+                f"All params would not fit on the largest PP rank. System "
+                f"Memory Cap:{per_chip_memory/1024} GB, Max Rank Resident "
+                f"Memory:{max_rank_memory_req/1024} GB.\n System:{system_name}"
+            )
 
     ## for tensor shareding per layer.
     assert pipeline_parallel >= 1, "Pipeline parallel must be >= 1"
@@ -87,7 +100,15 @@ def prefill_moddeling(model = 'BERT', batch_size = 1, input_tokens = 4096,
     model_df = get_model_df(model_prefill, system, unit, ub, intermediate_on_chip=True )
     remove_layer_file(model_prefill)   # temp CSV: final read done (07-06 leak fix)
     summary_table = get_summary_table(model_df, unit)
-    prefill_latency = summary_table[f'Latency ({unit.unit_time})'].values[0]                 # Latency in millisec
+    traversal_latency = summary_table[f'Latency ({unit.unit_time})'].values[0]               # Latency in millisec
+    pipeline_stage_latencies = get_pipeline_stage_latencies(
+        model_df, pipeline_parallel, unit,
+    )
+    prefill_latency = (
+        traversal_latency
+        if pipeline_parallel == 1
+        else max(pipeline_stage_latencies)
+    )
 
     if debug:
         display_df(simplify_df(model_df))
@@ -97,14 +118,9 @@ def prefill_moddeling(model = 'BERT', batch_size = 1, input_tokens = 4096,
     ### Final Latency and Thrpt Calculation
     ##################################################################################################
 
-    ## 1000x because the latency is in milli seconds. thrpt is in Token/s
-    # if pipeline_parallel > 1:
-    #     micro_batch_latency = prefill_latency
-    #     ## If the N micro batches, then the total latency is (N-1)*stage latency + initial_latency
-    #     ## We make the assumption that the pipeline is balanced and the latency is same for all stages
-    #     total_latency = ((num_micro_batches-1) * (prefill_latency / pipeline_parallel)) + micro_batch_latency
-    #     thrpt = 1000 * batch_size / total_latency
-    # else:
+    # vLLM keeps up to PP complete scheduler batches in ``batch_queue``.  At
+    # saturation, interdeparture service is the slowest physical PP rank;
+    # one request's full traversal remains available as a diagnostic below.
     # print(f"Prefill Latency: {prefill_latency}, Batch Size: {batch_size}")
     thrpt = 1000 * batch_size / prefill_latency
 
@@ -119,6 +135,9 @@ def prefill_moddeling(model = 'BERT', batch_size = 1, input_tokens = 4096,
 
     return ModdelingOutput(
                         Latency=prefill_latency,
+                        SaturatedServiceLatency=prefill_latency,
+                        TraversalLatency=traversal_latency,
+                        PipelineStageLatencies=pipeline_stage_latencies,
                         Throughput=thrpt,
                         Runtime_breakdown=runtime_breakdown,
                         is_offload=is_offloaded,

@@ -36,7 +36,16 @@ class RuntimeBreakdown():
         return vars(self)
 
 class ModdelingOutput(dict):
+    # ``Latency`` is saturated scheduler-batch interdeparture service.  For
+    # PP=1 it equals traversal latency; for PP>1 the full single-batch path and
+    # its exact rank decomposition remain available separately.
+    # ``Runtime_breakdown`` is accumulated over the full traversal path, not
+    # bottleneck-rank ``Latency``, when PP>1.  Its diagnostic categories can
+    # overlap and must not be blindly summed.
     Latency: float = 0
+    SaturatedServiceLatency: float = 0
+    TraversalLatency: float = 0
+    PipelineStageLatencies: Optional[tuple[float, ...]] = None
     Throughput: float = 0
     Runtime_breakdown: Optional[RuntimeBreakdown] = None
     is_offload: Optional[bool] = False

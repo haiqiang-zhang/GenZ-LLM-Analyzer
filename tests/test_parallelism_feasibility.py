@@ -103,7 +103,7 @@ def test_kv_layout_distinguishes_partition_boundary_and_replication():
     assert replicated.kv_layout.head_partition_saturated
 
 
-def test_optional_batch_constraint_rejects_empty_pipeline_microbatch():
+def test_pipeline_parallel_accepts_batch_smaller_than_stage_count():
     result = check_model_parallelism(
         "Qwen/Qwen2.5-7B-Instruct",
         tensor_parallel=1,
@@ -111,8 +111,8 @@ def test_optional_batch_constraint_rejects_empty_pipeline_microbatch():
         batch_size=2,
     )
 
-    assert not result.feasible
-    assert result.code == "pipeline_batch_too_small"
+    assert result.feasible
+    assert result.code == "ok"
 
 
 def test_unknown_model_fails_closed_and_require_raises():
@@ -152,6 +152,7 @@ def test_valid_parallelism_configs_exact_budget_and_batch_filter():
         (4, 1),
     ]
     assert [result.parallelism for result in batch_filtered] == [
+        (1, 4),
         (2, 2),
         (4, 1),
     ]

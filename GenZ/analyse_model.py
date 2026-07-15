@@ -121,6 +121,168 @@ def simplify_df(df:pd.DataFrame):
                 new_df = pd.concat([new_df, pd.DataFrame([new_row])], ignore_index=True)
     return new_df
 
+
+def _pipeline_stage_frames(
+    df: pd.DataFrame,
+    pipeline_parallel: int,
+) -> tuple[pd.DataFrame, ...]:
+    """Split an explicit PP graph into physical-rank dataframes.
+
+    The graph boundary is the one logical ``Message Pass`` emitted after each
+    non-last rank.  Repeat scopes must be wholly contained by one rank; a
+    boundary inside a repeat would make both latency and resident-memory
+    attribution ambiguous and therefore fails closed.
+    """
+    if (
+        isinstance(pipeline_parallel, bool)
+        or not isinstance(pipeline_parallel, int)
+        or pipeline_parallel < 1
+    ):
+        raise ValueError("pipeline_parallel must be a positive integer")
+    required = {"Layer Name", "Op Type", "Dimension"}
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(
+            f"pipeline graph dataframe missing columns: {sorted(missing)}"
+        )
+
+    stage_start = 0
+    repeat_stack: list[int] = []
+    stage_frames: list[pd.DataFrame] = []
+    for position in range(len(df)):
+        row = df.iloc[position]
+        op_type = row["Op Type"]
+        if op_type == "Repeat":
+            repeat = row["Dimension"]
+            if isinstance(repeat, bool):
+                raise ValueError("repeat count must be a positive integer")
+            try:
+                normalized = int(repeat)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("repeat count must be a positive integer") from exc
+            if normalized < 1 or repeat != normalized:
+                raise ValueError("repeat count must be a positive integer")
+            repeat_stack.append(normalized)
+            continue
+        if op_type == "EndRepeat":
+            if not repeat_stack:
+                raise ValueError("unmatched EndRepeat in pipeline graph")
+            repeat = repeat_stack.pop()
+            if row["Dimension"] != repeat:
+                raise ValueError("mismatched Repeat/EndRepeat in pipeline graph")
+            continue
+        if row["Layer Name"] == "Message Pass":
+            if repeat_stack:
+                raise ValueError(
+                    "pipeline Message Pass appears inside a Repeat scope; "
+                    "physical PP stage attribution is ambiguous"
+                )
+            stage_frames.append(
+                df.iloc[stage_start : position + 1].reset_index(drop=True)
+            )
+            stage_start = position + 1
+
+    if repeat_stack:
+        raise ValueError("unclosed Repeat in pipeline graph")
+    stage_frames.append(df.iloc[stage_start:].reset_index(drop=True))
+    if len(stage_frames) != pipeline_parallel:
+        raise ValueError(
+            f"pipeline graph contains {len(stage_frames)} physical stages; "
+            f"expected pipeline_parallel={pipeline_parallel}"
+        )
+    if any(frame.empty for frame in stage_frames):
+        raise ValueError("every physical PP stage must contain graph operators")
+    return tuple(stage_frames)
+
+
+def get_pipeline_stage_latencies(
+    df: pd.DataFrame,
+    pipeline_parallel: int,
+    unit=None,
+) -> tuple[float, ...]:
+    """Decompose one PP traversal into per-rank service times.
+
+    ``create_full_*_model`` emits one logical ``Message Pass`` after every
+    non-last PP rank.  The message is charged to its sending rank.  Repeat
+    markers for transformer layers are expanded locally, and a repeat scope
+    crossing a PP boundary fails closed because such a graph cannot identify
+    a physical rank bottleneck unambiguously.
+
+    The sum is one scheduler batch's end-to-end traversal latency.  Under
+    vLLM's saturated ``batch_queue`` (up to ``pipeline_parallel`` scheduler
+    batches in flight), the steady-state interdeparture service is the maximum
+    rank latency, not this sum.
+    """
+    unit = Unit() if unit is None else unit
+    latency_column = f"Latency ({unit.unit_time})"
+    if latency_column not in df.columns:
+        raise ValueError(
+            f"pipeline stage latency dataframe missing column: {latency_column!r}"
+        )
+    stage_latencies = []
+    for frame in _pipeline_stage_frames(df, pipeline_parallel):
+        multiplier = 1
+        current_stage_latency = 0.0
+        for position in range(len(frame)):
+            row = frame.iloc[position]
+            op_type = row["Op Type"]
+            if op_type == "Repeat":
+                multiplier *= int(row["Dimension"])
+                continue
+            if op_type == "EndRepeat":
+                multiplier //= int(row["Dimension"])
+                continue
+            try:
+                contribution = float(row[latency_column]) * multiplier
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("pipeline operator latency must be numeric") from exc
+            if not np.isfinite(contribution) or contribution < 0.0:
+                raise ValueError(
+                    "pipeline operator latency must be finite/non-negative"
+                )
+            current_stage_latency += contribution
+        stage_latencies.append(current_stage_latency)
+
+    if any(latency <= 0.0 for latency in stage_latencies):
+        raise ValueError("every physical PP stage must have positive latency")
+    return tuple(stage_latencies)
+
+
+def get_pipeline_stage_memory_requirements(
+    df: pd.DataFrame,
+    pipeline_parallel: int,
+    unit=None,
+) -> tuple[float, ...]:
+    """Return each PP rank's resident weights + KV cache requirement.
+
+    This preserves GenZ's existing fit/offload memory definition while making
+    its physical ownership exact.  Uneven vLLM layer partitions and structural
+    ``VLLM_PP_LAYER_PARTITION`` overrides must be checked against the largest
+    rank footprint; dividing aggregate memory by PP can admit a rank that does
+    not fit.  No fitted coefficient or topology residual is involved.
+    """
+    unit = Unit() if unit is None else unit
+    weights_column = f"Total Weights ({unit.unit_mem})"
+    kv_column = f"KV Cache ({unit.unit_mem})"
+    requirements: list[float] = []
+    for frame in _pipeline_stage_frames(df, pipeline_parallel):
+        summary = get_summary_table(frame, unit, model_characterstics=True)
+        try:
+            requirement = float(summary[weights_column].values[0]) + float(
+                summary[kv_column].values[0]
+            )
+        except (KeyError, TypeError, ValueError, IndexError, OverflowError) as exc:
+            raise ValueError(
+                "pipeline stage resident memory must contain numeric weights "
+                "and KV cache"
+            ) from exc
+        if not np.isfinite(requirement) or requirement < 0.0:
+            raise ValueError(
+                "pipeline stage resident memory must be finite/non-negative"
+            )
+        requirements.append(requirement)
+    return tuple(requirements)
+
 def _add_runtime_breakdown_layer(runtime_breakdown, layer_name, layer_latency):
     """Accumulate one already-repeat-scaled operator latency."""
     if layer_name in ['embeddings', 'classifier']:

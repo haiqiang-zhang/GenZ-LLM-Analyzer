@@ -1,6 +1,5 @@
 import pandas as pd
 import os
-from math import ceil
 import numpy as np
 from datetime import datetime
 from GenZ.parallelism import ParallelismConfig, check_model_parallelism
@@ -62,6 +61,94 @@ def end_repeat_layers(num_repeat:int):
     return [["End Repeat", num_repeat, 1, 1, 1, 1, 1, OpType.ENDREPEAT]]
 
 DATA_PATH = "/tmp/genz/data/"
+
+
+def vllm_pipeline_layer_partitions(
+    num_hidden_layers: int,
+    pipeline_parallel: int,
+    override=None,
+) -> tuple[int, ...]:
+    """Return vLLM's deterministic hidden-layer partition for PP ranks.
+
+    This mirrors vLLM 0.18.1 ``get_pp_indices``.  The default uses floor
+    division and gives remainder layers to ranks immediately before the last
+    rank (working backwards); the last rank is kept light for the output norm
+    and embedding, and for small remainders the first rank is also kept light
+    for the input embedding.  ``VLLM_PP_LAYER_PARTITION`` is a structural
+    runtime override, not a fitted efficiency coefficient.  An explicit
+    ``override`` wins over the environment so cached CM calls can put the
+    exact value in their cache key.
+
+    GenZ requires every modeled rank to own at least one transformer layer.
+    vLLM's parser technically permits zero/negative entries, but those graphs
+    do not have a meaningful GenZ stage service and therefore fail closed.
+    """
+    def exact_positive_int(value, name):
+        if isinstance(value, bool):
+            raise ValueError(f"{name} must be a positive integer")
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"{name} must be a positive integer") from exc
+        if normalized < 1 or value != normalized:
+            raise ValueError(f"{name} must be a positive integer")
+        return normalized
+
+    num_hidden_layers = exact_positive_int(num_hidden_layers, "num_hidden_layers")
+    pipeline_parallel = exact_positive_int(pipeline_parallel, "pipeline_parallel")
+    if pipeline_parallel > num_hidden_layers:
+        raise ValueError(
+            f"pipeline_parallel={pipeline_parallel} exceeds num_hidden_layers="
+            f"{num_hidden_layers}"
+        )
+
+    raw_override = (
+        os.environ.get("VLLM_PP_LAYER_PARTITION")
+        if override is None
+        else override
+    )
+    if raw_override is not None:
+        if isinstance(raw_override, str):
+            try:
+                partitions = [int(value) for value in raw_override.split(",")]
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid VLLM_PP_LAYER_PARTITION: {raw_override!r}"
+                ) from exc
+        else:
+            try:
+                partitions = [
+                    exact_positive_int(value, "pipeline partition entry")
+                    for value in raw_override
+                ]
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "pipeline layer partition override must be a comma-separated "
+                    "string or integer sequence"
+                ) from exc
+        if len(partitions) != pipeline_parallel:
+            raise ValueError(
+                f"pipeline layer partition has {len(partitions)} entries; "
+                f"expected pipeline_parallel={pipeline_parallel}"
+            )
+        if sum(partitions) != num_hidden_layers:
+            raise ValueError(
+                f"pipeline layer partition sums to {sum(partitions)}; expected "
+                f"num_hidden_layers={num_hidden_layers}"
+            )
+        if any(value <= 0 for value in partitions):
+            raise ValueError(
+                "GenZ pipeline layer partition requires every PP rank to own "
+                "at least one hidden layer"
+            )
+        return tuple(partitions)
+
+    layers_per_partition = num_hidden_layers // pipeline_parallel
+    partitions = [layers_per_partition] * pipeline_parallel
+    remaining_layers = num_hidden_layers % pipeline_parallel
+    for offset in range(2, remaining_layers + 2):
+        partitions[-offset] += 1
+    return tuple(partitions)
 
 
 def remove_layer_file(file_name, data_path: str = None) -> None:
@@ -171,24 +258,17 @@ def create_full_prefill_model(
         layers += end_repeat_layers(num_layers)
         return layers
 
+    partitions = vllm_pipeline_layer_partitions(
+        model_config.num_decoder_layers,
+        pipeline_stages,
+        args.get('pipeline_layer_partition'),
+    )
     full_model = []
     full_model += input_embedding(model_config, parallelism_config, input_sequence_length)
-    if pipeline_stages > 1:
-        layers_per_stage = ceil(model_config.num_decoder_layers / pipeline_stages)
-        layers_last_stage = model_config.num_decoder_layers - layers_per_stage * (pipeline_stages - 1)
-
-        ## For PP stages
-        ## First PP-1 stages will have layers_per_stage layers and message pass at the end
-        full_model += repeat_layers(pipeline_stages - 1)
-        ## Single stage will have layers_per_stage layers
-        full_model = add_layers(full_model, layers_per_stage)
-        ## Single stage layers end and message pass at the end
-        full_model += [["Message Pass", input_sequence_length // args.get('sequence_parallel', 1), model_config.hidden_size, 1, 1, 1, CollectiveType.MessagePass, OpType.Sync]]
-        full_model += end_repeat_layers(pipeline_stages - 1)
-        ## Last stage will have layers_last_stage layers and no message pass at the end
-        full_model = add_layers(full_model, layers_last_stage)
-    else:
-        full_model = add_layers(full_model, model_config.num_decoder_layers)
+    for rank, num_layers in enumerate(partitions):
+        full_model = add_layers(full_model, num_layers)
+        if rank < pipeline_stages - 1:
+            full_model += [["Message Pass", input_sequence_length // args.get('sequence_parallel', 1), model_config.hidden_size, 1, 1, 1, CollectiveType.MessagePass, OpType.Sync]]
 
     full_model += output_embedding(model_config, parallelism_config, input_sequence_length)
     if isinstance(name, ModelConfig):
@@ -259,19 +339,16 @@ def create_full_decode_model(
         layers += end_repeat_layers(num_layers)
         return layers
 
+    partitions = vllm_pipeline_layer_partitions(
+        model_config.num_decoder_layers,
+        pipeline_stages,
+        args.get('pipeline_layer_partition'),
+    )
     full_model = []
-
-    if pipeline_stages > 1:
-        layers_per_stage = ceil(model_config.num_decoder_layers / pipeline_stages)
-        layers_last_stage = model_config.num_decoder_layers - layers_per_stage * (pipeline_stages - 1)
-
-        full_model += repeat_layers(pipeline_stages - 1)
-        full_model = add_layers(full_model, layers_per_stage)
-        full_model += [["Message Pass", 1, model_config.hidden_size, 1, 1, 1, CollectiveType.MessagePass, OpType.Sync]]
-        full_model += end_repeat_layers(pipeline_stages - 1)
-        full_model = add_layers(full_model, layers_last_stage)
-    else:
-        full_model = add_layers(full_model, model_config.num_decoder_layers)
+    for rank, num_layers in enumerate(partitions):
+        full_model = add_layers(full_model, num_layers)
+        if rank < pipeline_stages - 1:
+            full_model += [["Message Pass", 1, model_config.hidden_size, 1, 1, 1, CollectiveType.MessagePass, OpType.Sync]]
     full_model += output_embedding(model_config, parallelism_config, 1)
     if isinstance(name, ModelConfig):
         name = name.model
@@ -323,24 +400,17 @@ def create_full_chunked_model(name:str ='GPT-2',
         return layers
 
     # assert prefill_length > 0, "Chunk size should be greater than the decode batches"
+    partitions = vllm_pipeline_layer_partitions(
+        model_config.num_decoder_layers,
+        pipeline_stages,
+        args.get('pipeline_layer_partition'),
+    )
     full_model = []
     full_model += input_embedding(model_config, parallelism_config, prefill_length)
-    if pipeline_stages > 1:
-        layers_per_stage = ceil(model_config.num_decoder_layers / pipeline_stages)
-        layers_last_stage = model_config.num_decoder_layers - layers_per_stage * (pipeline_stages - 1)
-
-        ## For PP stages
-        ## First PP-1 stages will have layers_per_stage layers and message pass at the end
-        full_model += repeat_layers(pipeline_stages - 1)
-        ## Single stage will have layers_per_stage layers
-        full_model = add_layers(full_model, layers_per_stage)
-        ## Single stage layers end and message pass at the end
-        full_model += [["Message Pass", chunk_size // args.get('sequence_parallel', 1), model_config.hidden_size, 1, 1, 1, CollectiveType.MessagePass, OpType.Sync]]
-        full_model += end_repeat_layers(pipeline_stages - 1)
-        ## Last stage will have layers_last_stage layers and no message pass at the end
-        full_model = add_layers(full_model, layers_last_stage)
-    else:
-        full_model = add_layers(full_model, model_config.num_decoder_layers)
+    for rank, num_layers in enumerate(partitions):
+        full_model = add_layers(full_model, num_layers)
+        if rank < pipeline_stages - 1:
+            full_model += [["Message Pass", chunk_size // args.get('sequence_parallel', 1), model_config.hidden_size, 1, 1, 1, CollectiveType.MessagePass, OpType.Sync]]
 
     full_model += output_embedding(model_config, parallelism_config, chunk_size)
     if isinstance(name, ModelConfig):

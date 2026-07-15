@@ -63,6 +63,14 @@ Refere to notebook/LLM_inference_perf.ipynb and notebook/LLM_memory_analysis.ipy
 ## Parallelism Scheme
 GenZ supports Tensor Parallelism (TP), Pipeline Parallelism (PP) accross large platforms with multiple NPUs.
 
+For vLLM pipeline parallelism, GenZ models one complete resident scheduler
+batch on every PP rank. `Latency` (and `SaturatedServiceLatency`) is the
+slowest-rank service time used for saturated interdeparture throughput.
+`TraversalLatency` is the sum of `PipelineStageLatencies` for one batch's full
+path. `Runtime_breakdown` is also a traversal diagnostic; for PP greater than
+one it must not be summed or compared as though it were the saturated
+`Latency`.
+
 
 ## Communication
 Tensor Parallelism requires `ring allreduce`. Pipeline Parallelism requires a single hop node-to-node message passing.
@@ -100,4 +108,3 @@ If you use GenZ in your [paper](https://arxiv.org/abs/2406.01698), please cite:
       primaryClass={cs.AR}
 }
 ```
-
