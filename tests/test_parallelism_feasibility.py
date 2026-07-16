@@ -233,6 +233,49 @@ def test_transfer_capability_can_allow_saturated_producer_fan_in():
     assert result.tp_ratio == 2
 
 
+@pytest.mark.parametrize(
+    "prefill_pp,decode_pp",
+    [(2, 1), (1, 2), (2, 2)],
+)
+def test_nixl_rejects_disaggregated_pipeline_parallelism(
+    prefill_pp, decode_pp
+):
+    result = check_disaggregated_parallelism(
+        "Qwen/Qwen2.5-14B-Instruct",
+        prefill_tp=1,
+        prefill_pp=prefill_pp,
+        decode_tp=1,
+        decode_pp=decode_pp,
+        capabilities=NIXL_KV_TRANSFER_CAPABILITIES,
+    )
+
+    assert not result.feasible
+    assert result.code == "pipeline_parallel_unsupported"
+    assert result.reason == (
+        "KV transfer 'nixl' does not support pipeline parallelism, got "
+        f"prefill_pp={prefill_pp} and decode_pp={decode_pp}"
+    )
+    with pytest.raises(
+        ParallelismValidationError,
+        match="does not support pipeline parallelism",
+    ):
+        result.require()
+
+
+def test_generic_kv_transfer_can_support_disaggregated_pipeline_parallelism():
+    result = check_disaggregated_parallelism(
+        "Qwen/Qwen2.5-14B-Instruct",
+        prefill_tp=1,
+        prefill_pp=2,
+        decode_tp=1,
+        decode_pp=2,
+        capabilities=GENERIC_KV_TRANSFER_CAPABILITIES,
+    )
+
+    assert result.feasible
+    assert result.code == "ok"
+
+
 def test_nixl_rejects_mamba_heterogeneous_tp_from_model_metadata():
     config = ModelConfig(
         model="test/mamba",

@@ -79,6 +79,7 @@ class KVTransferCapabilities:
     requires_integral_tp_ratio: bool = True
     supports_saturated_producer_fan_in: bool = True
     supports_mamba_heterogeneous_tp: bool = True
+    supports_pipeline_parallel: bool = True
 
 
 GENERIC_KV_TRANSFER_CAPABILITIES = KVTransferCapabilities(
@@ -86,14 +87,16 @@ GENERIC_KV_TRANSFER_CAPABILITIES = KVTransferCapabilities(
 )
 
 # vLLM's NIXL connector requires an integral TP ratio.  It cannot currently
-# fan in from a producer whose TP width has reached/exceeded its KV-head count,
-# and it requires homogeneous TP for Mamba state transfer.  These are connector
-# capabilities; the checks below still derive every model fact from ModelConfig.
+# address pipeline-parallel ranks, fan in from a producer whose TP width has
+# reached/exceeded its KV-head count, or transfer Mamba state across
+# heterogeneous TP widths.  These are connector capabilities; the checks below
+# still derive every model fact from ModelConfig.
 NIXL_KV_TRANSFER_CAPABILITIES = KVTransferCapabilities(
     name="nixl",
     requires_integral_tp_ratio=True,
     supports_saturated_producer_fan_in=False,
     supports_mamba_heterogeneous_tp=False,
+    supports_pipeline_parallel=False,
 )
 
 
@@ -386,6 +389,27 @@ def check_disaggregated_parallelism(
             feasible=False,
             code=f"decode_{decode.code}",
             reason=f"Invalid decode parallelism: {decode.reason}",
+            model=label,
+            prefill=prefill,
+            decode=decode,
+            capabilities=capabilities,
+        )
+
+    if (
+        not capabilities.supports_pipeline_parallel
+        and (
+            prefill.pipeline_parallel > 1
+            or decode.pipeline_parallel > 1
+        )
+    ):
+        return DisaggregatedParallelismCheck(
+            feasible=False,
+            code="pipeline_parallel_unsupported",
+            reason=(
+                f"KV transfer {capabilities.name!r} does not support pipeline "
+                f"parallelism, got prefill_pp={prefill.pipeline_parallel} and "
+                f"decode_pp={decode.pipeline_parallel}"
+            ),
             model=label,
             prefill=prefill,
             decode=decode,
